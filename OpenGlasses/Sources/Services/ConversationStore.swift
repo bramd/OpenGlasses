@@ -481,7 +481,11 @@ class ConversationStore: ObservableObject {
                         output.append(encrypted)
                         try output.write(to: url, options: [.atomic, .completeFileProtection])
                     } catch {
-                        NSLog("[ConversationStore] Encrypted save failed: %@", error.localizedDescription)
+                        // The existing ciphertext on disk is untouched — `encrypt` throws before
+                        // the write, and a failed unlock no longer rotates the key out from under
+                        // it. This save is simply dropped; the next one retries.
+                        NSLog("[ConversationStore] Encrypted save skipped, history on disk intact: %@",
+                              error.localizedDescription)
                     }
                 }
             } else {
