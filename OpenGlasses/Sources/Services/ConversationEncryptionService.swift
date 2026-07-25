@@ -57,12 +57,20 @@ actor ConversationEncryptionService {
 
     // MARK: - Key Management
 
-    /// Get existing key or create a new one.
+    /// Get the existing key, or create one **only when the Keychain genuinely holds none**.
+    ///
+    /// The distinction matters: `retrieveKey()` reads a `.userPresence`-protected item, so it also
+    /// fails when the user cancels Face ID, is in biometric lockout, or the device is locked. Those
+    /// are not "no key exists" — swallowing them and falling through to `createAndStoreKey()` would
+    /// delete the live key and mint a new one, making every previously encrypted conversation
+    /// permanently unreadable. Only `.keyNotFound` may create; every other error propagates so the
+    /// caller aborts the save with the ciphertext on disk left intact.
     private func getOrCreateKey() throws -> SymmetricKey {
-        if let existing = try? retrieveKey() {
-            return existing
+        do {
+            return try retrieveKey()
+        } catch EncryptionError.keyNotFound {
+            return try createAndStoreKey()
         }
-        return try createAndStoreKey()
     }
 
     /// Create a new symmetric key and store it in Keychain with biometric protection.
@@ -88,8 +96,14 @@ actor ConversationEncryptionService {
             kSecAttrAccessControl as String: accessControl,
         ]
 
-        // Delete any existing key first
-        SecItemDelete(query as CFDictionary)
+        // Clear any stale item so the add can't fail with errSecDuplicateItem. Scoped to the
+        // identity attributes only — reusing the add query (which carries the key material and
+        // access control) is not a valid delete predicate.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keychainAccount,
+            kSecAttrService as String: keychainService,
+        ] as CFDictionary)
 
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -98,6 +112,26 @@ actor ConversationEncryptionService {
 
         NSLog("[Encryption] Created new ChaCha20-Poly1305 key in Keychain")
         return key
+    }
+
+    /// Map a `SecItemCopyMatching` status onto the error the key path reacts to. Pure, so the
+    /// "which statuses may mint a new key" rule is unit-testable without a live Keychain.
+    ///
+    /// Only `errSecItemNotFound` is allowed to become `.keyNotFound` — that is the sole status
+    /// `getOrCreateKey` treats as licence to delete and regenerate. Presence failures map to
+    /// `.authenticationFailed` and everything else to `.keychainError`, both of which abort the
+    /// operation with the existing key and ciphertext untouched.
+    nonisolated static func retrievalError(for status: OSStatus) -> EncryptionError {
+        switch status {
+        case errSecItemNotFound:
+            return .keyNotFound
+        case errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed:
+            // The key exists but user presence couldn't be established (cancelled prompt,
+            // biometric lockout, locked device). Must never be mistaken for "no key".
+            return .authenticationFailed
+        default:
+            return .keychainError("Failed to retrieve key: \(status)")
+        }
     }
 
     /// Retrieve the symmetric key from Keychain. Triggers biometric prompt.
@@ -117,10 +151,7 @@ actor ConversationEncryptionService {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
         guard status == errSecSuccess, let keyData = result as? Data else {
-            if status == errSecItemNotFound {
-                throw EncryptionError.keyNotFound
-            }
-            throw EncryptionError.keychainError("Failed to retrieve key: \(status)")
+            throw Self.retrievalError(for: status)
         }
 
         return SymmetricKey(data: keyData)
@@ -181,7 +212,7 @@ actor ConversationEncryptionService {
 
 // MARK: - Errors
 
-enum EncryptionError: LocalizedError {
+enum EncryptionError: LocalizedError, Equatable {
     case keyNotFound
     case keychainError(String)
     case invalidData

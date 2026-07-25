@@ -1,4 +1,5 @@
 import Foundation
+import os.lock
 
 /// The wire transport a server speaks. The catalogue and editor pick one; `MCPClient` selects the
 /// matching `MCPTransport` conformer at request time (`MCPTransportFactory`). Today only `.http`
@@ -89,32 +90,52 @@ struct HTTPTransport: MCPTransport {
     var session: URLSession = .shared
 
     /// Per-server MCP session IDs, `static` so they survive across the per-request instances that
-    /// `MCPTransportFactory` creates. Thread-safe in practice because every caller goes through
-    /// the `@MainActor` `MCPClient`. Empty string means "initialized, server doesn't use
+    /// `MCPTransportFactory` creates. Empty string means "initialized, server doesn't use
     /// sessions"; absent key means "not yet initialized".
-    nonisolated(unsafe) private static var sessions: [String: String] = [:]
+    ///
+    /// Lock-guarded, **not** actor-isolated: `MCPTransport.request` is a `nonisolated async`
+    /// requirement on a non-isolated struct, so it runs on the cooperative pool even though every
+    /// caller goes through the `@MainActor` `MCPClient` — an `async` call does not inherit the
+    /// caller's actor. Two turns with requests in flight (a voice tool call and a Settings-driven
+    /// `discoverAllTools`), or `MCPClient.updateServer` calling `resetSessions()` from the main
+    /// actor mid-request, would otherwise mutate the dictionary concurrently.
+    private static let sessionStore = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
     /// Clear cached sessions (test support, and `MCPClient` calls it when a server's config
     /// changes so a rotated token re-handshakes).
-    static func resetSessions() { sessions.removeAll() }
+    static func resetSessions() { sessionStore.withLock { $0.removeAll() } }
+
+    /// The cached session ID for a server: `nil` = never initialized, `""` = initialized and the
+    /// server doesn't use sessions.
+    private static func session(for serverID: String) -> String? {
+        sessionStore.withLock { $0[serverID] }
+    }
+
+    private static func setSession(_ sessionID: String, for serverID: String) {
+        sessionStore.withLock { $0[serverID] = sessionID }
+    }
+
+    private static func clearSession(for serverID: String) {
+        sessionStore.withLock { $0.removeValue(forKey: serverID) }
+    }
 
     func request(_ payload: [String: Any], server: MCPServerConfig) async throws -> Data {
         // First contact with this server: run the MCP initialize handshake.
-        if Self.sessions[server.id] == nil {
+        if Self.session(for: server.id) == nil {
             await initializeSession(server: server)
         }
 
-        let sessionID = Self.sessions[server.id]
+        let sessionID = Self.session(for: server.id)
         let (data, response) = try await sendHTTP(payload, server: server, sessionID: sessionID)
         guard let httpResponse = response as? HTTPURLResponse else { return data }
 
         // 400/406 while we hold no real session → the server requires the MCP session
         // lifecycle (a previous handshake failed or expired). Re-initialize and retry once.
         if (httpResponse.statusCode == 400 || httpResponse.statusCode == 406), (sessionID ?? "").isEmpty {
-            Self.sessions.removeValue(forKey: server.id)
+            Self.clearSession(for: server.id)
             await initializeSession(server: server)
             let (retryData, retryResponse) = try await sendHTTP(payload, server: server,
-                                                                sessionID: Self.sessions[server.id])
+                                                                sessionID: Self.session(for: server.id))
             if let retryHTTP = retryResponse as? HTTPURLResponse, retryHTTP.statusCode >= 400 {
                 let body = String(data: retryData, encoding: .utf8) ?? ""
                 throw MCPTransportError.http(status: retryHTTP.statusCode, body: String(body.prefix(200)))
@@ -129,7 +150,7 @@ struct HTTPTransport: MCPTransport {
 
         // Capture a session ID from any successful response (a server may mint one late).
         if let newSessionID = httpResponse.value(forHTTPHeaderField: "mcp-session-id") {
-            Self.sessions[server.id] = newSessionID
+            Self.setSession(newSessionID, for: server.id)
         }
 
         return extractJSON(from: data, response: response, payload: payload)
@@ -153,14 +174,14 @@ struct HTTPTransport: MCPTransport {
         do {
             let (_, response) = try await sendHTTP(initPayload, server: server, sessionID: nil)
             let sessionID = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "mcp-session-id") ?? ""
-            Self.sessions[server.id] = sessionID   // "" = server doesn't use sessions
+            Self.setSession(sessionID, for: server.id)   // "" = server doesn't use sessions
 
             // Fire-and-forget; a server that returned a session expects this before real calls.
             let notifPayload: [String: Any] = ["jsonrpc": "2.0", "method": "notifications/initialized"]
             _ = try? await sendHTTP(notifPayload, server: server,
                                     sessionID: sessionID.isEmpty ? nil : sessionID)
         } catch {
-            Self.sessions[server.id] = ""
+            Self.setSession("", for: server.id)
             print("⚠️ MCP: session init failed for \(server.label), proceeding without session: \(error.localizedDescription)")
         }
     }
