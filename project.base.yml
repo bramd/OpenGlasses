@@ -159,6 +159,9 @@ targets:
     sources:
       - path: GlassesActivityWidget
       - path: OpenGlasses/Sources/Models/GlassesActivityAttributes.swift
+      # Shared with the main app — the widget stamps the deep-link trust token that the
+      # app requires on any link that acts (capture, listen, quick action).
+      - path: OpenGlasses/Sources/Shared/DeepLinkTrust.swift
     entitlements:
       path: GlassesActivityWidget/GlassesActivityWidget.entitlements
       properties:

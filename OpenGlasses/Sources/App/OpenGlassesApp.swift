@@ -136,6 +136,9 @@ struct OpenGlassesApp: App {
         // Move any plaintext provider secrets out of UserDefaults and into the
         // Keychain. Must run before anything reads a secret (AppState, LLM, TTS…).
         Config.migrateSecretsToKeychainIfNeeded()
+        // Mint the deep-link trust token before any URL can be delivered, so a first-party link
+        // is never rejected because the app hadn't got round to creating one.
+        DeepLinkTrust.ensureToken()
         // Defer Wearables SDK (Bluetooth permission) until after onboarding
         if Config.hasCompletedOnboarding {
             configureWearables()
@@ -176,6 +179,18 @@ struct OpenGlassesApp: App {
                     if url.scheme == "openglasses",
                        ["shortcut-result", "shortcut-cancel", "shortcut-error"].contains(url.host) {
                         ShortcutCallbackManager.shared.handleCallback(url: url)
+                        return
+                    }
+
+                    // A custom URL scheme is an open door: any app on the device can call it, with
+                    // no prompt and no caller identity. Links that act — capture a frame from the
+                    // glasses, open the mic, run a quick action — are honoured only when they carry
+                    // the app-group token the first-party widgets stamp on. See [[DeepLinkTrust]].
+                    if url.scheme == "openglasses",
+                       DeepLinkTrust.requiresTrustedCaller(host: url.host, action: url.lastPathComponent),
+                       !DeepLinkTrust.isTrusted(url) {
+                        NSLog("[OpenGlasses] Ignored untrusted deep link: %@/%@",
+                              url.host ?? "?", url.lastPathComponent)
                         return
                     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import os.lock
 
 /// Routes tool calls: native tools → MCP servers → OpenClaw fallback.
 @MainActor
@@ -177,28 +178,51 @@ final class NativeToolRouter {
             }
         }
 
-        // Race: tool execution vs timeout
-        let result: ToolResult = await withTaskGroup(of: ToolResult.self) { group in
-            // The actual work
-            group.addTask {
+        // Race: tool execution vs timeout.
+        //
+        // Deliberately *not* a task group. A group implicitly awaits all of its children before
+        // returning, so when the timeout sentinel won the race the group still blocked until the
+        // real work finished — `cancelAll()` only signals cooperative cancellation, and most tools
+        // here (HomeKit writes, URL-scheme launches, third-party SDK calls) never check it. The
+        // "timeout" therefore bounded nothing.
+        //
+        // Instead the two racers resume a single continuation and `resolved` decides the winner, so
+        // the caller returns on time. Cancellation is still requested, but work that ignores it is
+        // abandoned rather than waited on — and logged if it lands late, since its side effect will
+        // have happened after the model was told the call timed out.
+        let resolved = OSAllocatedUnfairLock(initialState: false)
+        /// Returns true for the first caller only.
+        func claim() -> Bool {
+            resolved.withLock { alreadyResolved in
+                if alreadyResolved { return false }
+                alreadyResolved = true
+                return true
+            }
+        }
+
+        let result: ToolResult = await withCheckedContinuation { continuation in
+            let workTask = Task {
+                let outcome: ToolResult
                 do {
-                    let result = try await work()
-                    return .success(result)
+                    outcome = .success(try await work())
                 } catch {
-                    return .failure("Tool error: \(error.localizedDescription)")
+                    outcome = .failure("Tool error: \(error.localizedDescription)")
+                }
+                if claim() {
+                    continuation.resume(returning: outcome)
+                } else {
+                    NSLog("[NativeToolRouter] Tool %@ finished after it timed out — its effect landed late",
+                          name)
                 }
             }
 
-            // Timeout sentinel
-            group.addTask { [toolTimeoutSeconds] in
+            Task { [toolTimeoutSeconds] in
                 try? await Task.sleep(nanoseconds: UInt64(toolTimeoutSeconds * 1_000_000_000))
-                return .failure("Tool '\(name)' timed out after \(Int(toolTimeoutSeconds))s")
+                guard claim() else { return }
+                workTask.cancel()   // best effort; cancellation-aware tools stop here
+                continuation.resume(
+                    returning: .failure("Tool '\(name)' timed out after \(Int(toolTimeoutSeconds))s"))
             }
-
-            // First to finish wins
-            let first = await group.next()!
-            group.cancelAll()
-            return first
         }
 
         stillWorkingTask.cancel()
