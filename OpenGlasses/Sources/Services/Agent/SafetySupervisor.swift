@@ -65,7 +65,8 @@ enum SafetySupervisor {
     static func evaluate(tool: String, args: [String: Any], context: SafetyContext) -> SafetyVerdict {
         var best: SafetyVerdict = .allow
         for rule in SafetyRuleKind.allCases where context.enabledRules.contains(rule) {
-            if let verdict = apply(rule, tool: tool, context: context), verdict.severity > best.severity {
+            if let verdict = apply(rule, tool: tool, args: args, context: context),
+               verdict.severity > best.severity {
                 best = verdict
             }
         }
@@ -73,7 +74,8 @@ enum SafetySupervisor {
         // tool must not run autonomously: `.recommend` requires explicit human confirmation, `.paused`
         // blocks it outright. Read-only tools are untouched (reading is fine while idle), and this
         // only ever *raises* severity — it never overrides a stricter rule verdict.
-        if let ceiling = autonomyCeiling(tool: tool, autonomy: context.autonomy), ceiling.severity > best.severity {
+        if let ceiling = autonomyCeiling(tool: tool, args: args, autonomy: context.autonomy),
+           ceiling.severity > best.severity {
             best = ceiling
         }
         return best
@@ -84,8 +86,9 @@ enum SafetySupervisor {
     /// rather than `.confirm`: a disengaged user can't answer a spoken prompt (and
     /// `requestConfirmation` would suspend the agent loop indefinitely), so the action is held — not
     /// run, not prompted — and surfaced on re-engagement via the held-recommendation store.
-    private static func autonomyCeiling(tool: String, autonomy: Autonomy) -> SafetyVerdict? {
-        guard PromptInjectionPolicy.isHighImpact(toolName: tool) else { return nil }
+    private static func autonomyCeiling(tool: String, args: [String: Any],
+                                        autonomy: Autonomy) -> SafetyVerdict? {
+        guard PromptInjectionPolicy.isHighImpact(toolName: tool, args: args) else { return nil }
         switch autonomy {
         case .autoAct:   return nil
         case .recommend: return .block(reason: "held — you've been idle, so ‘\(tool)’ wasn't run automatically")
@@ -93,10 +96,11 @@ enum SafetySupervisor {
         }
     }
 
-    private static func apply(_ rule: SafetyRuleKind, tool: String, context: SafetyContext) -> SafetyVerdict? {
+    private static func apply(_ rule: SafetyRuleKind, tool: String, args: [String: Any],
+                              context: SafetyContext) -> SafetyVerdict? {
         switch rule {
         case .needsVoiceApproval:
-            return PromptInjectionPolicy.isHighImpact(toolName: tool)
+            return PromptInjectionPolicy.isHighImpact(toolName: tool, args: args)
                 ? .confirm(reason: "‘\(tool)’ can take a real action — confirm first")
                 : nil
 

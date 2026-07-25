@@ -88,7 +88,8 @@ final class NativeToolRouter {
                 // Plan W: when the block is the presence autonomy ceiling on an acting tool (the
                 // user is idle/away), hold it for re-engagement instead of reporting a hard safety
                 // block — the action was deferred, not forbidden.
-                if context.autonomy != .autoAct, PromptInjectionPolicy.isHighImpact(toolName: name) {
+                if context.autonomy != .autoAct,
+                   PromptInjectionPolicy.isHighImpact(toolName: name, args: args) {
                     let summary = PromptInjectionPolicy.actionSummary(toolName: name, args: args)
                     onActionHeld?(summary)
                     NSLog("[NativeToolRouter] Held %@ for re-engagement (autonomy=%@)", name, context.autonomy.rawValue)
@@ -96,17 +97,22 @@ final class NativeToolRouter {
                 }
                 return .failure("'\(name)' was blocked by a safety rule (\(reason)). Do not retry; tell the user it was blocked for safety.")
             case .confirm(let reason):
-                if let coordinator = confirmationCoordinator {
-                    // High-impact tools get the richer action summary; other rules use their reason.
-                    let summary = PromptInjectionPolicy.isHighImpact(toolName: name)
-                        ? PromptInjectionPolicy.actionSummary(toolName: name, args: args)
-                        : reason
-                    NSLog("[NativeToolRouter] Safety supervisor requires confirmation for %@: %@", name, reason)
-                    let approved = await coordinator.requestConfirmation(toolName: name, summary: summary)
-                    guard approved else {
-                        NSLog("[NativeToolRouter] User declined %@", name)
-                        return .failure("The user did NOT approve this action, so '\(name)' was not performed. Do not retry it; tell the user it was cancelled unless they explicitly ask again.")
-                    }
+                guard let coordinator = confirmationCoordinator else {
+                    // No confirmation UI wired (e.g. headless): fail closed rather than actuate
+                    // blind, exactly as the agent-mode-off floor above does. Falling through here
+                    // would make the *more* autonomous mode the one that skips the gate.
+                    NSLog("[NativeToolRouter] No confirmation coordinator; refusing %@ (%@)", name, reason)
+                    return .failure("'\(name)' requires user confirmation, which isn't available right now, so it was not performed. Tell the user to try again with the app in the foreground.")
+                }
+                // High-impact tools get the richer action summary; other rules use their reason.
+                let summary = PromptInjectionPolicy.isHighImpact(toolName: name, args: args)
+                    ? PromptInjectionPolicy.actionSummary(toolName: name, args: args)
+                    : reason
+                NSLog("[NativeToolRouter] Safety supervisor requires confirmation for %@: %@", name, reason)
+                let approved = await coordinator.requestConfirmation(toolName: name, summary: summary)
+                guard approved else {
+                    NSLog("[NativeToolRouter] User declined %@", name)
+                    return .failure("The user did NOT approve this action, so '\(name)' was not performed. Do not retry it; tell the user it was cancelled unless they explicitly ask again.")
                 }
             }
         }
