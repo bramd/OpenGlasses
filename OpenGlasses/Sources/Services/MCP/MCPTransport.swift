@@ -116,7 +116,7 @@ struct HTTPTransport: MCPTransport {
     }
 
     private static func clearSession(for serverID: String) {
-        sessionStore.withLock { $0.removeValue(forKey: serverID) }
+        sessionStore.withLock { $0[serverID] = nil }
     }
 
     func request(_ payload: [String: Any], server: MCPServerConfig) async throws -> Data {

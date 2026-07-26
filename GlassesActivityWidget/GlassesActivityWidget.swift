@@ -47,7 +47,7 @@ struct GlassesActivityWidget: Widget {
                         if context.state.isConnected {
                             actionButtons(for: context.state, compact: true)
                         } else {
-                            Link(destination: URL(string: "openglasses://connect")!) {
+                            Link(destination: DeepLinkTrust.signedURL("openglasses://connect")!) {
                                 Label {
                                     Text("Connect")
                                 } icon: {
@@ -139,7 +139,7 @@ struct GlassesActivityWidget: Widget {
             if !context.state.isConnected {
                 chunkyLink(label: "Connect Glasses",
                            icon: "antenna.radiowaves.left.and.right",
-                           url: URL(string: "openglasses://connect")!,
+                           url: DeepLinkTrust.signedURL("openglasses://connect")!,
                            tint: .green, strong: true)
             }
         }
@@ -164,20 +164,20 @@ struct GlassesActivityWidget: Widget {
         if !state.quickActionButtons.isEmpty {
             return state.quickActionButtons.prefix(4).map {
                 ActionItem(id: $0.id, label: $0.label, icon: $0.icon,
-                           url: URL(string: "openglasses://quickaction/\($0.id)")!,
+                           url: DeepLinkTrust.signedURL("openglasses://quickaction/\($0.id)")!,
                            accent: $0.id == "field-assist")
             }
         } else if !state.personaButtons.isEmpty {
             return state.personaButtons.prefix(4).map {
                 ActionItem(id: $0.id, label: $0.name, icon: "person.fill",
-                           url: URL(string: "openglasses://persona/\($0.id)")!, accent: false)
+                           url: DeepLinkTrust.signedURL("openglasses://persona/\($0.id)")!, accent: false)
             }
         } else {
             return [
                 ActionItem(id: "ask", label: "Ask", icon: "mic.fill",
-                           url: URL(string: "openglasses://action/ask")!, accent: true),
+                           url: DeepLinkTrust.signedURL("openglasses://action/ask")!, accent: true),
                 ActionItem(id: "photo", label: "Photo", icon: "camera.fill",
-                           url: URL(string: "openglasses://action/photo")!, accent: false),
+                           url: DeepLinkTrust.signedURL("openglasses://action/photo")!, accent: false),
             ]
         }
     }

@@ -130,7 +130,7 @@ struct HomeWidgetView: View {
                     .background(accent.opacity(0.85), in: RoundedRectangle(cornerRadius: 16))
                 }
                 .buttonStyle(.plain)
-                Link(destination: URL(string: "openglasses://action/photo")!) {
+                Link(destination: DeepLinkTrust.signedURL("openglasses://action/photo")!) {
                     HStack(spacing: 4) {
                         Image(systemName: "camera.fill")
                         Text("Photo")
@@ -181,7 +181,7 @@ struct HomeWidgetView: View {
     }
 
     private func quickActionLink(url: String, icon: String, label: String) -> some View {
-        Link(destination: URL(string: url)!) {
+        Link(destination: DeepLinkTrust.signedURL(url)!) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.title3)

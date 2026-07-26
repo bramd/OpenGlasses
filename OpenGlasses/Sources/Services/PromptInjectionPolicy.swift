@@ -11,9 +11,9 @@ import Foundation
 ///  1. **Framing** — untrusted tool output is wrapped in a labelled envelope before it is fed
 ///     back to the model, so the model can tell data from instructions. See ``wrap(toolName:content:)``.
 ///  2. **Human-in-the-loop** — high-impact / irreversible tool calls (send a message, actuate
-///     smart home, run a shortcut, delegate to the gateway) are gated behind an explicit user
-///     confirmation when agent mode is on. See ``isHighImpact(toolName:)`` and the
-///     ``ToolConfirmationCoordinator``.
+///     smart home, run a shortcut, delegate to the gateway, start a coding-agent run) are gated
+///     behind an explicit user confirmation when agent mode is on. See
+///     ``isHighImpact(toolName:args:)`` and the ``ToolConfirmationCoordinator``.
 ///
 /// The system prompt block in ``systemPromptPolicy`` tells the model the rules; the envelope and
 /// the confirmation gate enforce them even if the model is talked into ignoring the prompt.
@@ -81,8 +81,32 @@ enum PromptInjectionPolicy {
         "execute",          // OpenClaw gateway — can do anything on the user's machine
     ]
 
-    static func isHighImpact(toolName: String) -> Bool {
-        highImpactTools.contains(toolName)
+    /// Whether this specific call takes a real-world action and so needs human confirmation.
+    ///
+    /// Args-aware because not every tool is all-or-nothing. `code_agent` dispatches an arbitrary
+    /// free-text task to a remote coding agent on `start` — the same blast radius as `execute`,
+    /// which is unconditionally high-impact — but its other actions are not: `status` is a read,
+    /// `cancel`/`deny` only ever reduce what's running, and `confirm` is itself the answer to a
+    /// consent prompt. Gating those would put a confirmation in front of routine, harmless calls
+    /// and train the wearer to approve reflexively, weakening the one prompt that matters. See
+    /// [[ToolConfirmationCoordinator]].
+    static func isHighImpact(toolName: String, args: [String: Any]) -> Bool {
+        if highImpactTools.contains(toolName) { return true }
+        if toolName == "code_agent" { return isDispatchingAgentRun(args) }
+        return false
+    }
+
+    /// Whether a `code_agent` call would start a run.
+    ///
+    /// Mirrors `AgentControlTool`'s own parsing, which defaults a missing action to `start` — so a
+    /// call with no `action` (or a non-string one) dispatches, and must be gated. Leading/trailing
+    /// space is trimmed here but not there, which can only over-classify, never under-classify.
+    static func isDispatchingAgentRun(_ args: [String: Any]) -> Bool {
+        guard let action = (args["action"] as? String)?
+            .trimmingCharacters(in: .whitespaces).lowercased(), !action.isEmpty else {
+            return true   // absent/blank action == "start"
+        }
+        return action == "start"
     }
 
     /// A short, human-readable description of what a high-impact call will do, shown in the
@@ -112,6 +136,10 @@ enum PromptInjectionPolicy {
             return "Export / share clinical data (\(str("action") ?? "export"))"
         case "execute":
             return "Ask the OpenClaw gateway to: \(preview(str("task") ?? compactArgs(args)))"
+        case "code_agent":
+            // Only `start` reaches a confirmation prompt (see `isDispatchingAgentRun`).
+            let project = str("project").map { " on \($0)" } ?? ""
+            return "Start a coding-agent run\(project): \(preview(str("prompt") ?? compactArgs(args)))"
         default:
             return "Run \(toolName): \(compactArgs(args))"
         }

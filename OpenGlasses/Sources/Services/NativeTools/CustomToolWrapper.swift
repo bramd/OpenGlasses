@@ -56,10 +56,16 @@ struct CustomToolWrapper: NativeTool {
             }
         }
 
-        // Callback URLs — the shortcut will redirect back to OpenGlasses with results
-        urlString += "&x-success=openglasses://shortcut-result"
-        urlString += "&x-cancel=openglasses://shortcut-cancel"
-        urlString += "&x-error=openglasses://shortcut-error"
+        // Callback URLs — the shortcut will redirect back to OpenGlasses with results. Each
+        // carries a one-shot token so another app can't answer this call with output of its own
+        // (the return leg is an openglasses:// link anyone can open). The token rides unencoded,
+        // as these callback values already do: `?` and `=` are legal inside a query value, and the
+        // token's base64url alphabet contains no `&` to break out of it.
+        let callbackToken = ShortcutCallbackManager.makeCallbackToken()
+        let cb = "\(ShortcutCallbackManager.queryName)=\(callbackToken)"
+        urlString += "&x-success=openglasses://shortcut-result?\(cb)"
+        urlString += "&x-cancel=openglasses://shortcut-cancel?\(cb)"
+        urlString += "&x-error=openglasses://shortcut-error?\(cb)"
 
         guard let url = URL(string: urlString) else {
             return "Couldn't build URL for shortcut '\(shortcutName)'."
@@ -74,7 +80,7 @@ struct CustomToolWrapper: NativeTool {
         }
 
         // Store a pending callback so the URL handler can resolve it
-        ShortcutCallbackManager.shared.setPending(toolName: name)
+        ShortcutCallbackManager.shared.setPending(toolName: name, callbackToken: callbackToken)
 
         await MainActor.run {
             UIApplication.shared.open(url)
