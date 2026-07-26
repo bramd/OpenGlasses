@@ -23,10 +23,25 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Config/Entitlements/Personal/GlassesActivityWidget.entitlements
         DEVELOPMENT_TEAM: YOUR_APPLE_TEAM_ID
 
-  # Teleprompter Share Extension (PR B). Copy Config/Entitlements/Personal/GlassesActivityWidget.entitlements
-  # to OpenGlassesShareExtension.entitlements (same app group) for device builds.
+  # Every remaining signed target needs a team as well, or a command-line device build fails
+  # on it ("Signing for X requires a development team"). Building from Xcode's GUI hides this,
+  # because automatic signing fills the team in for you — so the gap only shows up in CI or in
+  # a headless `xcodebuild -destination 'platform=iOS,...'`.
+  #
+  # Unlike the app and the widget, these three keep the committed entitlements: their only
+  # capability is the shared app group, which any team can sign. There's no personal override
+  # to copy, and none is needed.
   OpenGlassesShareExtension:
     settings:
       base:
-        CODE_SIGN_ENTITLEMENTS: Config/Entitlements/Personal/OpenGlassesShareExtension.entitlements
+        DEVELOPMENT_TEAM: YOUR_APPLE_TEAM_ID
+
+  OpenGlassesWatch:
+    settings:
+      base:
+        DEVELOPMENT_TEAM: YOUR_APPLE_TEAM_ID
+
+  OpenGlassesWatchWidget:
+    settings:
+      base:
         DEVELOPMENT_TEAM: YOUR_APPLE_TEAM_ID
