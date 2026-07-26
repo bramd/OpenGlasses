@@ -48,6 +48,26 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Config/Entitlements/Personal/GlassesActivityWidget.entitlements
         DEVELOPMENT_TEAM: ${team}
         PRODUCT_BUNDLE_IDENTIFIER: ${widget_bundle}
+
+  # The remaining signed targets need a team as well, or a command-line device build fails on
+  # them ("Signing for X requires a development team"). Xcode's GUI hides this by filling the
+  # team in automatically, so the gap only surfaces in CI or a headless
+  # \`xcodebuild -destination 'platform=iOS,...'\`. They keep the committed entitlements —
+  # their only capability is the shared app group, which any team can sign.
+  OpenGlassesShareExtension:
+    settings:
+      base:
+        DEVELOPMENT_TEAM: ${team}
+
+  OpenGlassesWatch:
+    settings:
+      base:
+        DEVELOPMENT_TEAM: ${team}
+
+  OpenGlassesWatchWidget:
+    settings:
+      base:
+        DEVELOPMENT_TEAM: ${team}
 EOF
 }
 
