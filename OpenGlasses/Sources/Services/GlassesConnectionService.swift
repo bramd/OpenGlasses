@@ -18,13 +18,15 @@ class GlassesConnectionService: ObservableObject {
         // have been called yet (deferred until after onboarding).
         // Call startObserving() explicitly after Wearables is configured.
         if Config.hasCompletedOnboarding {
-            observeDevices()
+            startObserving()
         }
     }
 
-    /// Begin observing connected devices. Call after Wearables.configure().
+    /// Begin observing connected devices. Safe to call before the SDK is configured — it
+    /// configures on demand rather than trusting the caller, since the alternative is a fatal.
     func startObserving() {
         guard devicesListenerToken == nil else { return }
+        guard WearablesBootstrap.ensureConfigured() else { return }
         observeDevices()
     }
 
@@ -53,6 +55,17 @@ class GlassesConnectionService: ObservableObject {
     }
 
     func connect() async {
+        // The SDK may still be unconfigured here: launch-time configuration is gated on
+        // `hasCompletedOnboarding`, which never becomes true for a user who saved an API key
+        // before finishing onboarding. Touching `Wearables.shared` in that state is fatal.
+        guard WearablesBootstrap.ensureConfigured() else {
+            connectionStatus = "Glasses SDK unavailable — check the MWDAT keys in Info.plist"
+            return
+        }
+        // Same gate skipped the devices listener in init(), so without this the registration
+        // would succeed and the device would never appear as connected.
+        startObserving()
+
         connectionStatus = "Registering..."
         let stateBefore = Wearables.shared.registrationState
         print("📋 Registration state before: \(stateBefore)")

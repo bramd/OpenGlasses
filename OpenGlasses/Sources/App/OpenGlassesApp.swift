@@ -359,7 +359,7 @@ struct OpenGlassesApp: App {
     private func configureWearables() {
         do {
             NSLog("[OpenGlasses] Logging active")
-            try Wearables.configure()
+            guard WearablesBootstrap.ensureConfigured() else { return }
             NSLog("[OpenGlasses] Meta Wearables SDK configured successfully")
             let state = Wearables.shared.registrationState
             NSLog("[OpenGlasses] Registration state: \(state.rawValue)")
