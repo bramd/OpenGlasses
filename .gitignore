@@ -50,6 +50,9 @@ xcschemes-backup/
 project.local.yml
 .openglasses-generate.env
 
+# Personal build helpers — local to one machine, never part of an upstream PR
+Scripts/local-*
+
 # Local secrets — private keys, never commit (the .example is the template)
 secrets/*
 !secrets/*.example
